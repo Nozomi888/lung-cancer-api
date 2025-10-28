@@ -66,6 +66,10 @@ except Exception as e:
     image_model = None
     clinical_model = None
 
+@app.route('/')
+def home():
+    # A simple health check route
+    return jsonify({"status": "API is running!"}), 200
 
 # --- API Endpoint for Predictions ---
 @app.route('/predict', methods=['POST'])
