@@ -1,20 +1,39 @@
 import os
+import json
 import numpy as np
 import tensorflow as tf
 import joblib
+import firebase_admin
+from firebase_admin import credentials, auth
+from firebase_admin import firestore
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
 from google import genai
-from google.genai import types # Keep this import
+from google.genai import types
 import logging
 from dotenv import load_dotenv
+import datetime 
 
 # --- Initialization ---
 load_dotenv() 
 app = Flask(__name__)
 CORS(app) 
 logging.basicConfig(level=logging.INFO)
+
+# --- Firebase Admin SDK Initialization ---
+db = None # Initialize db variable
+try:
+    cred_json_string = os.getenv('FIREBASE_SERVICE_ACCOUNT_JSON')
+    if not cred_json_string:
+        raise ValueError("FIREBASE_SERVICE_ACCOUNT_JSON secret not found.")
+    cred_dict = json.loads(cred_json_string)
+    cred = credentials.Certificate(cred_dict)
+    firebase_admin.initialize_app(cred)
+    db = firestore.client() # <-- Initialize Firestore client
+    logging.info("Firebase Admin SDK and Firestore client initialized successfully.")
+except Exception as e:
+    logging.error(f"FATAL: Failed to initialize Firebase Admin SDK: {e}")
 
 # --- Configure Gemini API ---
 gemini_client = None
@@ -74,6 +93,24 @@ def home():
 # --- API Endpoint for Predictions ---
 @app.route('/predict', methods=['POST'])
 def predict():
+
+    uid = None # Define uid outside try block
+    # --- Token Verification ---
+    try:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            logging.warning("Missing or invalid Authorization header.")
+            return jsonify({'error': 'Unauthorized: Missing or invalid token'}), 401
+        id_token = auth_header.split("Bearer ").pop()
+        if not id_token: raise ValueError("Bearer token is empty")
+        decoded_token = auth.verify_id_token(id_token)
+        uid = decoded_token['uid'] # <-- Get the User ID
+        logging.info(f"Token verified for user UID: {uid}")
+    except Exception as e:
+        # ... (your existing error handling for token verification) ...
+         logging.error(f"Auth error: {e}")
+         return jsonify({'error': f'Unauthorized: {e}'}), 403
+    
     if not all([image_model, clinical_model, scaler, feature_order]):
         return jsonify({'error': 'A model or preprocessor failed to load.'}), 500
 
@@ -172,12 +209,35 @@ def predict():
                 logging.error(f"Gemini API call failed: {e}")
                 gemini_summary = f"CT: **{image_pred_label}**, Risk: **{clinical_pred_label}**. (AI summary failed: {e})"
 
-        return jsonify({
+        # --- Prepare result data ---
+        result_data = {
             'image_prediction': {'label': image_pred_label, 'confidence': image_confidence},
             'clinical_prediction': {'label': clinical_pred_label, 'confidence': clinical_confidence},
             'ai_summary': gemini_summary
-        })
+        }
 
+        # === ADD THIS: SAVE TO FIRESTORE ===
+        if db and uid: # Only save if Firestore is initialized and user is known
+            try:
+                prediction_entry = {
+                    'userId': uid,
+                    'timestamp': datetime.datetime.now(datetime.timezone.utc), # Record time
+                    'role': role,
+                    'clinicalInputs': input_features_dict, # Save the input data
+                    'results': result_data # Save the prediction results
+                    # You could add image storage URL here if you implement image upload
+                }
+                # Add data to a 'predictions' collection
+                # Creates a subcollection for the user, then adds a doc with auto-ID
+                doc_ref = db.collection('predictions').document(uid).collection('userPredictions').add(prediction_entry)
+                logging.info(f"Prediction saved to Firestore for user {uid}, doc ID: {doc_ref[1].id}")
+            except Exception as e:
+                logging.error(f"Error saving prediction to Firestore for user {uid}: {e}")
+                # Don't fail the request, just log the error
+        # === END SAVE TO FIRESTORE ===
+
+        return jsonify(result_data) # Return original results to frontend
+        
     except Exception as e:
         logging.error(f"Prediction error: {e}")
         return jsonify({'error': 'Internal error during prediction.'}), 500
