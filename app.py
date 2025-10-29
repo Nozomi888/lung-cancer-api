@@ -24,16 +24,35 @@ logging.basicConfig(level=logging.INFO)
 # --- Firebase Admin SDK Initialization ---
 db = None # Initialize db variable
 try:
+    # Try getting credentials from ENV VAR (for deployment like Hugging Face)
     cred_json_string = os.getenv('FIREBASE_SERVICE_ACCOUNT_JSON')
-    if not cred_json_string:
-        raise ValueError("FIREBASE_SERVICE_ACCOUNT_JSON secret not found.")
-    cred_dict = json.loads(cred_json_string)
-    cred = credentials.Certificate(cred_dict)
+    if cred_json_string:
+        logging.info("Initializing Firebase Admin using environment variable.")
+        cred_dict = json.loads(cred_json_string)
+        cred = credentials.Certificate(cred_dict)
+    else:
+        # --- ADD THIS FALLBACK FOR LOCAL DEVELOPMENT ---
+        # If ENV VAR is missing, try loading directly from file
+        logging.info("Initializing Firebase Admin using local serviceAccountKey.json file.")
+        cred_path = "serviceAccountKey.json" # Assumes file is in the same directory as app.py
+        if not os.path.exists(cred_path):
+            raise FileNotFoundError(
+                "serviceAccountKey.json not found. "
+                "Set FIREBASE_SERVICE_ACCOUNT_JSON env var or place key file here."
+            )
+        cred = credentials.Certificate(cred_path)
+        # --- END FALLBACK ---
+
+    # Initialize the app with the credentials found
     firebase_admin.initialize_app(cred)
-    db = firestore.client() # <-- Initialize Firestore client
+    db = firestore.client() # Initialize Firestore client
     logging.info("Firebase Admin SDK and Firestore client initialized successfully.")
+
 except Exception as e:
     logging.error(f"FATAL: Failed to initialize Firebase Admin SDK: {e}")
+    # Consider how your app should behave if Firebase fails to init
+# --- End Firebase Init ---
+
 
 # --- Configure Gemini API ---
 gemini_client = None
