@@ -181,7 +181,7 @@ def predict():
 
         # --- Clinical Data Processing (FIXED) ---
         
-        # 1. Create the dictionary first (this line was missing)
+        # 1. Create the dictionary first 
         input_features_dict = {feature: float(clinical_data_form.get(feature, 0)) for feature in feature_order}
         
         # 2. Create the list *from* the dictionary to ensure correct order
@@ -256,9 +256,8 @@ def predict():
                 **Generate the Summary based on the provided outputs and the instructions for the selected role:**
                 """
                 
-                # Use your original, working API call
                 response = gemini_client.models.generate_content(
-                    model='models/gemini-2.0-flash', # Kept your original model name
+                    model='models/gemini-3.5-flash', 
                     contents=[prompt]
                 )
                 gemini_summary = response.text
